@@ -6,6 +6,5 @@ moviepy==1.0.3
 pandas==2.0.3
 openpyxl==3.1.2
 ffmpeg-python==0.2.0
-numpy==1.24.4  # Specific version that works with pandas 2.0.3
+numpy==1.24.4
 gunicorn==21.2.0
-uvicorn==0.29.0
