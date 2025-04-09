@@ -12,14 +12,21 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 app = Flask(__name__)
 CORS(app)
 
+# Global model variable
+whisper_model = None
+
+@app.before_first_request
+def load_model():
+    global whisper_model
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    whisper_model = whisper.load_model("medium", device=device)
+
 def check_ffmpeg():
     try:
         subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print("ffmpeg is installed and working!")
+        return True
     except (subprocess.CalledProcessError, FileNotFoundError):
-        print("ffmpeg is NOT installed or not working correctly.")
         return False
-    return True
 
 def extract_audio(video_path):
     if not check_ffmpeg():
@@ -41,22 +48,21 @@ def extract_audio(video_path):
 
 def transcribe_audio(audio_path):
     try:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = whisper.load_model("medium", device=device)
-        
-        result = model.transcribe(audio_path, language="en", fp16=torch.cuda.is_available())
+        if whisper_model is None:
+            raise Exception("Whisper model not loaded")
+            
+        result = whisper_model.transcribe(audio_path)
         return result["text"], None
     except Exception as e:
         return None, str(e)
 
 def extract_info(text):
     data = {"name": None, "location": None}
-    
     name_patterns = [
         r"my name is ([A-Za-z\s]+)",
         r"myself ([A-Za-z\s]+)",
         r"i am ([A-Za-z\s]+)",
-        r"this is me ([A-Za-z\s]+)",  # Added for cases like "Hi, this is me Payal"
+        r"this is me ([A-Za-z\s]+)",
         r"i'm ([A-Za-z\s]+)"
     ]
     
@@ -64,7 +70,7 @@ def extract_info(text):
         r"i'm from ([A-Za-z\s]+)",
         r"i live in ([A-Za-z\s]+)",
         r"i am from ([A-Za-z\s]+)",
-        r"then i moved to ([A-Za-z\s]+)"  # Added for "Then I moved to India"
+        r"then i moved to ([A-Za-z\s]+)"
     ]
     
     for pattern in name_patterns:
@@ -81,11 +87,21 @@ def extract_info(text):
     
     return data
 
+@app.route('/')
+def home():
+    return "Whisper Transcription API is running", 200
+
+@app.route('/health')
+def health_check():
+    return jsonify({
+        "status": "healthy",
+        "whisper_ready": whisper_model is not None
+    }), 200
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
     if "video" not in request.files:
-        return jsonify({"error": "No video file provided."}), 400
+        return jsonify({"error": "No video file provided"}), 400
     
     file = request.files["video"]
     
@@ -120,31 +136,20 @@ def transcribe():
 def download_excel():
     try:
         data = request.get_json()
-        print("Received Data:", data)  # Debugging step
-
         if not data:
             return jsonify({"error": "No JSON data provided"}), 400
 
-        extracted_info = data.get("extracted_info", {})
-        transcription = data.get("transcription", "")
-
-        # Properly structure the data for Excel
         df = pd.DataFrame([{
-            "Location": extracted_info.get("location", "N/A"),
-            "Name": extracted_info.get("name", "N/A"),
-            "Transcription": transcription
+            "Location": data.get("extracted_info", {}).get("location", "N/A"),
+            "Name": data.get("extracted_info", {}).get("name", "N/A"),
+            "Transcription": data.get("transcription", "")
         }])
 
         excel_path = "transcription_data.xlsx"
         df.to_excel(excel_path, index=False)
-
-        print("Excel file created successfully at:", excel_path)  # Debugging step
-        return send_file(excel_path, as_attachment=True, download_name="transcription_data.xlsx")
-
+        return send_file(excel_path, as_attachment=True)
     except Exception as e:
-        print("Error:", str(e))  # Show actual error
         return jsonify({"error": str(e)}), 500
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
