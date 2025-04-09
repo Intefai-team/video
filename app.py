@@ -12,12 +12,9 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 app = Flask(__name__)
 CORS(app)
 
-# Global model variable
+# Load model at startup (not using before_first_request)
 whisper_model = None
-
-@app.before_first_request
-def load_model():
-    global whisper_model
+if not os.environ.get("WERKZEUG_RUN_MAIN"):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     whisper_model = whisper.load_model("medium", device=device)
 
